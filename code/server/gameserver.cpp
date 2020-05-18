@@ -9,10 +9,10 @@ the clients to communicate with each other by displaying messages sent from any
 individual one.
 
 Listening on server's localhost address. A proxy server redirects websocket connections and messages
-to the port that it listens on.
+to port 8080, where this program is listening.
 */
 
-// this project uses the websocket++ library to handle WebSocket communication
+// this project uses the websocketpp library to handle WebSocket communication
 #include <websocketpp/server.hpp>
 // uses insecure websockets, proxy handles security with SSL
 #include <websocketpp/config/asio_no_tls.hpp>
@@ -26,10 +26,10 @@ to the port that it listens on.
 
 using namespace std;
 
-using websocketpp::connection_hdl;				// connection handler
-using websocketpp::lib::placeholders::_1;		// used as argument for callback functions
+using websocketpp::connection_hdl;			// connection handler
+using websocketpp::lib::placeholders::_1;	// used as argument for callback functions
 using websocketpp::lib::placeholders::_2;
-using websocketpp::lib::bind;					// used to assign callback functions to events
+using websocketpp::lib::bind;				// used to assign callback functions to events
 
 
 
