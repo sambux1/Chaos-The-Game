@@ -26,10 +26,10 @@ to port 8080, where this program is listening.
 
 using namespace std;
 
-using websocketpp::connection_hdl;			// connection handler
+using websocketpp::connection_hdl;		// connection handler
 using websocketpp::lib::placeholders::_1;	// used as argument for callback functions
 using websocketpp::lib::placeholders::_2;
-using websocketpp::lib::bind;				// used to assign callback functions to events
+using websocketpp::lib::bind;			// used to assign callback functions to events
 
 
 
