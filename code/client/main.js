@@ -20,13 +20,13 @@ var orangeSprite;
 function connect() {
 	
 	// create a new connection to the server, uses secure websockets
-	//websocket = new WebSocket("wss://chaos-the-game.com/websocket:443");
+	websocket = new WebSocket("wss://chaos-the-game.com/websocket:443");
 	
 	/*
 	this is used for testing on my computer
-	*/
-	websocket = new WebSocket('ws://localhost:8080');
 	
+	websocket = new WebSocket('ws://localhost:8080');
+	*/
 	
 	// callback function for when a connection is first established
 	websocket.onopen = function() {
