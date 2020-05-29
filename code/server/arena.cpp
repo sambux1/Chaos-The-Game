@@ -14,6 +14,9 @@ single game instance.
 // include game files
 #include "player.h"
 #include "message_struct.h"
+#include "polygon.h"
+#include "projectile.h"
+#include "collisions.h"
 
 // include other dependencies
 #include <iostream>
@@ -21,6 +24,7 @@ single game instance.
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <cmath>
 // used for random number generation
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,7 +36,7 @@ single game instance.
 using namespace std;
 
 // the colors that will be assigned to the players
-const string Arena::color_list[] = {"blue", "green", "red", "orange"};
+const string Arena::color_list[] = {"blue", "green", "purple", "orange"};
 
 
 // constructor
@@ -41,6 +45,8 @@ Arena::Arena() {
 	accepting_players = true;
 	ready_to_start = false;
 	color_index = 0;
+	
+	testprojcount = 0;
 }
 
 // destructor, does not do anything yet
@@ -62,14 +68,14 @@ bool Arena::add_player(Player* player) {
 	arena_players.insert(player);
 	num_players++;
 	
+	// assign the player the next color in the list and increment the index
+	player->color = color_list[color_index];
+	color_index++;
+	
 	// check if the arena should be closed off to new players
 	if (num_players >= MAX_PLAYERS) {
 		accepting_players = false;
 	}
-	
-	// assign the player the next color in the list and increment the index
-	player->color = color_list[color_index];
-	color_index++;
 	
 	// if the function reaches this point, the addition was successful
 	return true;
@@ -164,8 +170,14 @@ void Arena::game_loop() {
 		// iterate through each message and update the player's velocity
 		process_messages();
 		
+		/*
+		handle all game related activity
+		*/
+		
 		// move each player according to its velocity
 		update_player_positions();
+		// move each projectile according to its velocity
+		update_projectiles();
 		
 		// compile all relevant data into a string message and push it to the outgoing queue
 		send_message();
@@ -208,8 +220,11 @@ void Arena::init_player_positions() {
 			valid = true;
 			
 			// find random starting coordinates
+			// add half the player dimensions since the coordinates are the player's center point
 			xStart = rand() % (SCREEN_WIDTH - Player::PLAYER_WIDTH);
+			xStart += Player::PLAYER_WIDTH / 2;
 			yStart = rand() % (SCREEN_HEIGHT - Player::PLAYER_HEIGHT);
+			yStart += Player::PLAYER_WIDTH / 2;
 			
 			// check for collisions with the other starting coordinates
 			for (Player* other_player : arena_players) {
@@ -242,7 +257,7 @@ void Arena::init_player_positions() {
 
 // go through the queue of messages and take the actions associated with each message
 void Arena::process_messages() {
-	arena_lock.lock();
+	lock_guard<mutex> guard(arena_lock);
 	// process messages until there are no more in the queue
 	while (!incoming_queue.empty()) {
 		// pop the top message off tthe queue
@@ -255,62 +270,168 @@ void Arena::process_messages() {
 		boost::split(data, msg->message_text, boost::is_any_of(","));
 		
 		// set the velocity for the player according to the message data
-		msg->player->velX = stoi(data[0]);
-		msg->player->velY = stoi(data[1]);
+		// set the shooting status for the player
+		try {
+			msg->player->rotationVel = stoi(data[0]);
+			msg->player->vel = stoi(data[1]);
+			
+			bool space_pressed;
+			if (stoi(data[2]) == 1) {
+				space_pressed = true;
+				cout << "space pressed!!!!!!!!!!!!!!!!!!!!!" << endl;
+			} else {
+				space_pressed = false;
+			}
+			if (space_pressed && msg->player->ready_to_shoot) {
+				msg->player->shoot_projectile = true;
+				msg->player->ready_to_shoot = false;
+			} else if (space_pressed) {
+				msg->player->shoot_projectile = false;
+			} else if (!space_pressed) {
+				msg->player->shoot_projectile = false;
+				msg->player->ready_to_shoot = true;
+			}
+		} catch (exception e) {
+			// probably needs better error handling, won't worry about it for now
+		}
 	}
-	
-	arena_lock.unlock();
 }
 
 // update the position of each player according to its velocity, as long as the move is valid
 void Arena::update_player_positions() {
 	for (Player* player : arena_players) {
-		/*
-		find how far away the player is from each other player
-		if there will be no collision with a "full" movement (5 pixels), move the player the full amount
-		if there will be a collision, move the player to occupy as much room as it can without colliding
-		*/
-		
-		int newX = player->posX + (5 * player->velX);
-		int newY = player->posY + (5 * player->velY);
-		
-		// check for collision with the wall
-		if ((newX < 0) || ((newX + 150) > SCREEN_WIDTH) || (newY < 0) || ((newY + 100) > SCREEN_HEIGHT)) {
-			continue;
-		}
-		
+		// separate the movement into 5 movements by a single pixel, check for a collision each time
+		int i = 0;
 		bool collision = false;
 		
-		for (Player* other_player : arena_players) {
-			// if both players are the same, skip to next iteration
-			if (player->color == other_player->color) {
-				continue;
+		while ((i < MOVEMENT_PER_FRAME) && (!collision)) {
+			/*
+			if there will be no collision with a movement, move the player
+			*/
+
+			player->newRotation = player->rotation + player->rotationVel;
+			player->newRotation = (player->newRotation + 360) % 360;
+			
+			player->velX = - player->vel * sin(player->newRotation * (M_PI / 180));
+			player->velY = player->vel * cos(player->newRotation * (M_PI / 180));
+			
+			player->newX = player->posX + player->velX;
+			player->newY = player->posY + player->velY;
+			
+			/*
+			check for wall collisions
+			- update rectangle points
+			- for each point, check if it overlaps with wall
+			- no need to create a polygon for each wall, unnecessary
+			*/
+			
+			// check if each point is outside the boundary
+			player->update_rectangle_points();
+			for (point p : player->body.points) {
+				if ((p.x <= 0) || (p.x >= SCREEN_WIDTH) || (p.y <= 0) || (p.y >= SCREEN_HEIGHT)) {
+					collision = true;
+					break;
+				}
 			}
 			
-			// check for collision if movement is allowed
-			int distanceX = newX - other_player->posX;
-			distanceX = abs(distanceX) - 150;
-			int distanceY = newY - other_player->posY;
-			distanceY = abs(distanceY) - 100;
-			
-			if ((distanceX < 5) && (distanceY < 5)) {
-				collision = true;
+			// break now for efficiency
+			if (collision) {
+				break;
 			}
+			
+			for (Player* other_player : arena_players) {
+				// if both players are the same, skip to next iteration
+				if (player->color == other_player->color) {
+					continue;
+				}
+				
+				other_player->update_rectangle_points();
+				
+				bool overlapping = Collisions::polygon_collision(player->body, other_player->body);
+				if (overlapping) {
+					collision = true;
+				}
+			}
+			
+			if (!collision) {
+				// no collision, move the position and rotation in the direction of the velocity
+				player->posX = player->newX;
+				player->posY = player->newY;
+				player->rotation = player->newRotation;
+			}
+			i++;
 		}
 		
-		if (!collision) {
-			// move the position in the direction of the velocity, multiplied by a scaling factor
-			player->posX = newX;
-			player->posY = newY;
+		if (player->shoot_projectile) {
+			Projectile* projectile = new Projectile(player->posX, player->posY,
+													player->rotation, Player::PLAYER_HEIGHT);
+			projectile->shooter_color = player->color;
+			projectiles.insert(projectile);
+			player->shoot_projectile = false;
 		}
 	}
 }
 
-// sends out a message with the color and coordinateds of each player to draw
+// update the positions and check collisions for each projectile
+void Arena::update_projectiles() {
+	for (Projectile* projectile : projectiles) {
+		projectile->posX += projectile->velX;
+		projectile->posY += projectile->velY;
+		
+		/*
+		check wall collision
+		*/
+		
+		if (projectile->posX <= Projectile::RADIUS) {
+			projectile->velX = abs(projectile->velX);
+		}
+		if (projectile->posX >= (SCREEN_WIDTH - Projectile::RADIUS)) {
+			projectile->velX = - abs(projectile->velX);
+		}
+		if (projectile->posY <= Projectile::RADIUS) {
+			projectile->velY = abs(projectile->velY);
+		}
+		if (projectile->posY >= (SCREEN_HEIGHT - Projectile::RADIUS)) {
+			projectile->velY = - abs(projectile->velY);
+		}
+		
+		/*
+		check player collision
+		*/
+		
+		// checks if the ball is destroyed in a collision
+		bool was_deleted = false;
+		
+		for (Player* player : arena_players) {
+			// get player ready to find actual rectangle corners
+			player->reset_temp_vars();
+			player->update_rectangle_points();
+			// check collision between the player and the ball
+			bool collision = Collisions::ball_player_collision(projectile, player->body);
+			if (collision) {
+				if ((projectile->tick_count > 2) || (projectile->shooter_color != player->color)) {
+					arena_players.erase(player);
+					dead_players.insert(player);
+					projectiles.erase(projectile);
+					delete projectile;
+					was_deleted = true;
+					break;
+				}
+			}
+		}
+		
+		// if the ball was not deleted after a collision, increment its tick count
+		if (!was_deleted) {
+			projectile->tick_count++;
+		}
+	}
+}
+
+// sends out a message with the color and coordinates of each player to draw
 // will expand the data sent as the game develops
 /*
 example output message:
-	"blue,100,100,green,300,300,red,500,500"
+	"blue,100,100,0,green,300,300,90,red,500,500,180"
 */
 void Arena::send_message() {
 	string message = "";
@@ -327,8 +448,24 @@ void Arena::send_message() {
 		
 		// append the message string with the data
 		message += player->color;
-		message += "," + to_string(player->posX);
-		message += "," + to_string(player->posY);
+		message += "," + to_string((int) (player->posX + 0.5));
+		message += "," + to_string((int) (player->posY + 0.5));
+		message += "," + to_string(player->rotation);
+		
+		i++;
+	}
+	
+	message += "/";
+	i = 0;
+	
+	// add each projectile's data to the message
+	for (Projectile* projectile : projectiles) {
+		if (i != 0) {
+			message += ",";
+		}
+		
+		message += to_string((int) (projectile->posX + 0.5));
+		message += "," + to_string((int) (projectile->posY + 0.5));
 		
 		i++;
 	}

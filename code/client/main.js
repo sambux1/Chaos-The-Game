@@ -1,34 +1,48 @@
 /*
-Client v0.1
+Client
+
+Chaos The Game
 
 A connection is made to the server via websockets, and messages are sent and received through 
 this connection.
 */
 
+var keysDown = [];
+var readyToSend = false;
 var websocket;
+
+// declaration of player sprites
+var blueSprite;
+var greenSprite;
+var purpleSprite;
+var orangeSprite;
 
 function connect() {
 	
 	// create a new connection to the server, uses secure websockets
-	websocket = new WebSocket("wss://chaos-the-game.com/websocket:443");
+	//websocket = new WebSocket("wss://chaos-the-game.com/websocket:443");
 	
 	/*
 	this is used for testing on my computer
-	websocket = new WebSocket('ws://localhost:8080');
 	*/
+	websocket = new WebSocket('ws://localhost:8080');
+	
 	
 	// callback function for when a connection is first established
 	websocket.onopen = function() {
-		var name = document.getElementById("nameTextBox").value;
-		var message = "*** " + name + " joined the chat";
-		websocket.send(message);
+		readyToSend = true;
 	};
 	
 	// callback function for new messages
 	websocket.onmessage = function(event) {
 		var message = event.data;
+		
+		// split the message into player data and projectile data
+		var parts = message.split('/');
 		// split the data into individual components using the commas
-		var data = message.split(',');
+		var data = parts[0].split(',');
+		var projectiles = parts[1].split(',');
+		
 		var index = 0;
 		
 		var canvas = document.getElementById("canvas");
@@ -37,30 +51,114 @@ function connect() {
 		context.clearRect(0, 0, canvas.width, canvas.height);
 		
 		while (index < data.length) {
-			context.fillStyle = data[index];
-			context.fillRect(parseInt(data[index+1]), parseInt(data[index+2]), 150, 100);
-			index += 3;
+			// load the correct image by passing the color of player
+			var image = loadImage(data[index]);
+			
+			// the size of each side of the square
+			var size = 100;
+			
+			// saves the current translation and rotation so it can be restored after drawing
+			context.save();
+			
+			// set the position and rotation of the image
+			context.translate(parseInt(data[index+1]), parseInt(data[index+2]));
+			context.rotate(parseInt(data[index+3]) * Math.PI/180);
+			
+			context.drawImage(image, -size/2, -size/2, size, size);
+			context.restore();
+			index += 4;
+		}
+		
+		index = 0;
+		while (index < projectiles.length) {
+			context.beginPath();
+			context.arc(parseInt(projectiles[index]), parseInt(projectiles[index+1]), 10, 0, 2 * Math.PI);
+			context.stroke();
+			index += 2;
 		}
 	};
 	
 }
 
-// listens for a key press and send it to the server
-document.addEventListener('keydown', sendData);
+// load the correct sprite for a player based on their color
+function loadImage(color) {
+	if (color == 'blue') {
+		return blueSprite;
+	}
+	if (color == 'green') {
+		return greenSprite;
+	}
+	if (color == 'purple') {
+		return purpleSprite;
+	}
+	if (color == 'orange') {
+		return orangeSprite;
+	}
+}
+
+document.onkeydown = function(event) {
+	keysDown[event.keyCode] = true;
+	sendData();
+}
+
+document.onkeyup = function(event) {
+	keysDown[event.keyCode] = false;
+	sendData();
+}
 
 function sendData(event) {
-	var message;
-	if (event.key == 'ArrowUp') {
-		message = '0,-1';
-	} else if (event.key == 'ArrowDown') {
-		message = '0,1';
-	} else if (event.key == 'ArrowLeft') {
-		message = '-1,0';
-	} else if (event.key == 'ArrowRight') {
-		message = '1,0';
+	if (!readyToSend) {
+		console.log('not ready to send');
+		return;
+	}
+	var data = [0, 0, 0];
+	var message = '';
+	
+	// arrow keys
+	if (keysDown[38]) {
+		data[1] -= 1;
+	}
+	if (keysDown[40]) {
+		data[1] += 1;
+	}
+	if (keysDown[37]) {
+		data[0] -= 1;
+	}
+	if (keysDown[39]) {
+		data[0] += 1;
 	}
 	
+	// space bar
+	if (keysDown[32]) {
+		data[2] = 1;
+	}
+	
+	console.log(data);
+	
+	message = data[0] + ',' + data[1] + ',' + data[2];
+	
 	websocket.send(message);
+}
+
+
+window.onload = function() {
+	var canvas = document.getElementById("canvas");
+	var context = canvas.getContext("2d");
+
+	// makes the images not blurry
+	context.imageSmoothingEnabled = false;
+
+	/*
+	load images
+	*/
+	blueSprite = new Image();
+	blueSprite.src = '../../assets/player-sprites/player-sprite-blue.png';
+	greenSprite = new Image();
+	greenSprite.src = '../../assets/player-sprites/player-sprite-green.png';
+	purpleSprite = new Image();
+	purpleSprite.src = '../../assets/player-sprites/player-sprite-purple.png';
+	orangeSprite = new Image();
+	orangeSprite.src = '../../assets/player-sprites/player-sprite-orange.png';
 }
 
 

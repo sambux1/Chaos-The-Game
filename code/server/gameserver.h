@@ -2,7 +2,6 @@
 gameserver class header file
 
 Chaos The Game
-server v0.1
 
 This server will accept WebSocket connections from multiple clients and allow
 the clients to communicate with each other by displaying messages sent from any

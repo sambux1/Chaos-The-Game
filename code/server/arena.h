@@ -17,6 +17,7 @@ single game instance.
 // include game files
 #include "player.h"
 #include "message_struct.h"
+#include "projectile.h"
 
 // include other dependencies
 #include <queue>
@@ -61,6 +62,9 @@ public:
 	// update the position of each player according to its velocity
 	void update_player_positions();
 	
+	// update the positions and handle collisions for each projectile
+	void update_projectiles();
+	
 	// adds a message to the outgoing queue with the color and coordinateds of each player to draw
 	void send_message();
 	
@@ -72,6 +76,8 @@ public:
 	
 	// the list of players in the arena
 	set<Player*> arena_players;
+	// set to add players to when they die so they are accounted for but not displayed
+	set<Player*> dead_players;
 		
 	// queue of messages received from the server
 	queue<message_struct*> incoming_queue;
@@ -101,6 +107,14 @@ private:
 	static const string color_list[];
 	// the index of the color to be given to a new player
 	int color_index;
+	
+	// pixels to move and degrees to rotate each frame
+	static const int MOVEMENT_PER_FRAME = 5;
+	
+	// list of projectiles
+	set<Projectile*> projectiles;
+	
+	int testprojcount;
 };
 
 #endif
