@@ -152,13 +152,13 @@ window.onload = function() {
 	load images
 	*/
 	blueSprite = new Image();
-	blueSprite.src = '../../assets/player-sprites/player-sprite-blue.png';
+	blueSprite.src = 'player-sprites/player-sprite-blue.png';
 	greenSprite = new Image();
-	greenSprite.src = '../../assets/player-sprites/player-sprite-green.png';
+	greenSprite.src = 'player-sprites/player-sprite-green.png';
 	purpleSprite = new Image();
-	purpleSprite.src = '../../assets/player-sprites/player-sprite-purple.png';
+	purpleSprite.src = 'player-sprites/player-sprite-purple.png';
 	orangeSprite = new Image();
-	orangeSprite.src = '../../assets/player-sprites/player-sprite-orange.png';
+	orangeSprite.src = 'player-sprites/player-sprite-orange.png';
 }
 
 
