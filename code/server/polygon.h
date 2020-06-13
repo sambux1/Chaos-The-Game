@@ -8,30 +8,11 @@ Chaos The Game
 #ifndef POLYGON_H
 #define POLYGON_H
 
+#include "point_vect_struct.h"
+
 #include <vector>
 
 using namespace std;
-
-
-/*
-struct to contain a single point (x and y coordinates)
-*/
-typedef struct point {
-	point() {}
-	point(int x, int y) : x(x), y(y) {}
-	int x;
-	int y;
-} point;
-
-/*
-struct to contain a vector (x and y coordinates)
-*/
-typedef struct vect {
-	vect() {}
-	vect(int x, int y) : x(x), y(y) {}
-	double x;
-	double y;
-} vect;
 
 
 class Polygon {

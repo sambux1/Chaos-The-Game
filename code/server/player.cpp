@@ -8,6 +8,7 @@ Chaos The Game
 #include "player.h"
 
 #include "polygon.h"
+#include "point_vect_struct.h"
 
 // include dependencies
 #include <iostream>

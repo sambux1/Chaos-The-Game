@@ -10,6 +10,7 @@ Chaos The Game
 #include <string>
 
 #include "polygon.h"
+#include "point_vect_struct.h"
 
 using namespace std;
 

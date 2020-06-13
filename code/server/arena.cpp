@@ -17,6 +17,8 @@ single game instance.
 #include "polygon.h"
 #include "projectile.h"
 #include "collisions.h"
+#include "wall.h"
+#include "wall_manager.h"
 
 // include other dependencies
 #include <iostream>
@@ -45,8 +47,6 @@ Arena::Arena() {
 	accepting_players = true;
 	ready_to_start = false;
 	color_index = 0;
-	
-	testprojcount = 0;
 }
 
 // destructor, does not do anything yet
@@ -141,6 +141,9 @@ void Arena::setup() {
 	// give every player a random starting position, check to make sure they are valid
 	init_player_positions();
 	
+	// create the walls
+	wall_manager.create_walls();
+	
 	// send out the first message to show the starting positions
 	send_message();
 }
@@ -207,13 +210,16 @@ void Arena::game_loop() {
 void Arena::init_player_positions() {
 	// set the seed for the random number generator
 	srand(time(NULL));
+	int count = 0;
 	
 	for (Player* player : arena_players) {
 		// used for looping until valid coordinates are found
-		bool valid = false;
+		bool valid = true;
 		
 		// coordinates
-		int xStart, yStart;
+		int xStart = 100 + (200 * count);
+		int yStart = 300;
+		count++;
 		
 		while (!valid) {
 			// set valid to true, if no collisions are found, the loop will end
@@ -278,7 +284,6 @@ void Arena::process_messages() {
 			bool space_pressed;
 			if (stoi(data[2]) == 1) {
 				space_pressed = true;
-				cout << "space pressed!!!!!!!!!!!!!!!!!!!!!" << endl;
 			} else {
 				space_pressed = false;
 			}
@@ -303,6 +308,7 @@ void Arena::update_player_positions() {
 		// separate the movement into 5 movements by a single pixel, check for a collision each time
 		int i = 0;
 		bool collision = false;
+		bool delete_player = false;
 		
 		while ((i < MOVEMENT_PER_FRAME) && (!collision)) {
 			/*
@@ -353,6 +359,33 @@ void Arena::update_player_positions() {
 				}
 			}
 			
+			// break now for efficiency
+			if (collision) {
+				break;
+			}
+			
+			for (Wall* wall : wall_manager.walls) {
+				wall->update_points();
+				bool c = Collisions::polygon_collision(player->body, wall->body);
+				if (c) {
+					collision = true;
+				}
+				
+				for (Polygon spike : wall->spikes) {
+					bool destroy = Collisions::polygon_collision(player->body, spike);
+					if (destroy) {
+						collision = true;
+						delete_player = true;
+						
+					}
+				}
+			}
+			
+			// break now for efficiency
+			if (collision) {
+				break;
+			}
+			
 			if (!collision) {
 				// no collision, move the position and rotation in the direction of the velocity
 				player->posX = player->newX;
@@ -360,6 +393,12 @@ void Arena::update_player_positions() {
 				player->rotation = player->newRotation;
 			}
 			i++;
+		}
+		
+		if (delete_player) {
+			arena_players.erase(player);
+			dead_players.insert(player);;
+			continue;
 		}
 		
 		if (player->shoot_projectile) {
@@ -379,7 +418,7 @@ void Arena::update_projectiles() {
 		projectile->posY += projectile->velY;
 		
 		/*
-		check wall collision
+		check boundary collision
 		*/
 		
 		if (projectile->posX <= Projectile::RADIUS) {
@@ -401,6 +440,19 @@ void Arena::update_projectiles() {
 		
 		// checks if the ball is destroyed in a collision
 		bool was_deleted = false;
+		
+		for (Wall* wall : wall_manager.walls) {
+			wall->update_points();
+			bool c = Collisions::wall_ball_collision(projectile, wall);
+			if (c) {
+				projectiles.erase(projectile);
+				//walls.erase(wall);
+				delete projectile;
+				//delete wall;
+				return;
+			}
+		}
+		
 		
 		for (Player* player : arena_players) {
 			// get player ready to find actual rectangle corners
@@ -424,6 +476,7 @@ void Arena::update_projectiles() {
 		if (!was_deleted) {
 			projectile->tick_count++;
 		}
+		
 	}
 }
 
@@ -451,6 +504,22 @@ void Arena::send_message() {
 		message += "," + to_string((int) (player->posX + 0.5));
 		message += "," + to_string((int) (player->posY + 0.5));
 		message += "," + to_string(player->rotation);
+		
+		i++;
+	}
+	
+	message += "/";
+	i = 0;
+	
+	// add each wall's data to the message
+	for (Wall* wall : wall_manager.walls) {
+		if (i != 0) {
+			message += ",";
+		}
+		
+		message += to_string(wall->posX);
+		message += "," + to_string(wall->posY);
+		message += "," + to_string(wall->rotation);
 		
 		i++;
 	}

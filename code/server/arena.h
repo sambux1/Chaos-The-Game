@@ -18,6 +18,8 @@ single game instance.
 #include "player.h"
 #include "message_struct.h"
 #include "projectile.h"
+#include "wall.h"
+#include "wall_manager.h"
 
 // include other dependencies
 #include <queue>
@@ -56,6 +58,9 @@ public:
 	// assigns random positions to the players before the game starts
 	void init_player_positions();
 	
+	// create walls
+	void create_walls();
+	
 	// go through the messages queue and take the appropriate action for each
 	void process_messages();
 	
@@ -87,7 +92,7 @@ public:
 	// number of players currently in the arena
 	int num_players;
 	// maximum number of players allowed in an arena
-	static const int MAX_PLAYERS = 4;
+	static const int MAX_PLAYERS = 2;
 	
 	// functions to lock and unlock the arena lock, called by the server
 	void lock_mutex();
@@ -114,7 +119,11 @@ private:
 	// list of projectiles
 	set<Projectile*> projectiles;
 	
-	int testprojcount;
+	// list of walls
+	set<Wall*> walls;
+	
+	// handles wall updates
+	Wall_Manager wall_manager;
 };
 
 #endif
