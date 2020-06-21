@@ -20,13 +20,13 @@ var orangeSprite;
 function connect() {
 	
 	// create a new connection to the server, uses secure websockets
-	// websocket = new WebSocket("wss://chaos-the-game.com/websocket:443");
+	websocket = new WebSocket("wss://chaos-the-game.com/websocket:443");
 	
 	/*
 	this is used for testing on my computer
-	*/
-	websocket = new WebSocket('ws://localhost:8080');
 	
+	websocket = new WebSocket('ws://localhost:8080');
+	*/
 	
 	// callback function for when a connection is first established
 	websocket.onopen = function() {
@@ -42,7 +42,8 @@ function connect() {
 		// split the data into individual components using the commas
 		var players = parts[0].split(',');
 		var walls = parts[1].split(',');
-		var projectiles = parts[2].split(',');
+		var bombs = parts[2].split(',');
+		var projectiles = parts[3].split(',');
 		
 		var index = 0;
 		
@@ -51,12 +52,16 @@ function connect() {
 		
 		context.clearRect(0, 0, canvas.width, canvas.height);
 		
+		// the size of each side of the square
+		var size = 100;
+		
+		// the dimensions of the walls
+		var wall_width = 40;
+		var wall_height = 200;
+		
 		while (index < players.length) {
 			// load the correct image by passing the color of player
 			var image = loadImage(players[index]);
-			
-			// the size of each side of the square
-			var size = 100;
 			
 			// saves the current translation and rotation so it can be restored after drawing
 			context.save();
@@ -70,27 +75,32 @@ function connect() {
 			index += 4;
 		}
 		
+		index = 1;
+		while (index < bombs.length) {
+			context.save();
+			context.translate(parseInt(bombs[index]), parseInt(bombs[index+1]));
+			context.strokeStyle = 'red';
+			context.beginPath();
+			context.arc(0, 0, parseInt(bombs[index+2]), 0, 2 * Math.PI);
+			if (parseInt(bombs[index+3])) {
+				context.fillStyle = 'rgba(255, 0, 0, 0.5)';
+			} else {
+				context.fillStyle = 'red';
+			}
+			context.fill();
+			context.stroke();
+			context.restore();
+			index += 4;
+		}
+		
 		index = 0;
 		while (index < walls.length) {
 			context.save();
 			context.translate(parseInt(walls[index]), parseInt(walls[index+1]));
 			context.rotate(parseInt(walls[index+2]) * Math.PI / 180);
-			context.fillStyle = 'blue';
-			context.fillRect(-20, -100, 40, 200);
-			
-			// draw spikes
 			context.beginPath();
-			context.moveTo(-20, -100);
-			context.lineTo(0, -135);
-			context.stroke();
-			context.lineTo(20, -100);
-			context.stroke();
-			
-			context.beginPath();
-			context.moveTo(-20, 100);
-			context.lineTo(0, 135);
-			context.stroke();
-			context.lineTo(20, 100);
+			context.moveTo(0, -70);
+			context.lineTo(0, 70);
 			context.stroke();
 			
 			context.restore();
@@ -179,8 +189,8 @@ window.onload = function() {
 	/*
 	load images
 	*/
-	/*
-	************** used for deployed version
+	
+	//************** used for deployed version
 	blueSprite = new Image();
 	blueSprite.src = 'player-sprites/player-sprite-blue.png';
 	greenSprite = new Image();
@@ -189,10 +199,10 @@ window.onload = function() {
 	purpleSprite.src = 'player-sprites/player-sprite-purple.png';
 	orangeSprite = new Image();
 	orangeSprite.src = 'player-sprites/player-sprite-orange.png';
-	*/
 	
-	// used for local testing
-	blueSprite = new Image();
+	
+	//************** used for local testing
+	/* blueSprite = new Image();
 	blueSprite.src = '../../assets/player-sprites/player-sprite-blue.png';
 	greenSprite = new Image();
 	greenSprite.src = '../../assets/player-sprites/player-sprite-green.png';
@@ -200,6 +210,7 @@ window.onload = function() {
 	purpleSprite.src = '../../assets/player-sprites/player-sprite-purple.png';
 	orangeSprite = new Image();
 	orangeSprite.src = '../../assets/player-sprites/player-sprite-orange.png';
+	*/
 }
 
 
