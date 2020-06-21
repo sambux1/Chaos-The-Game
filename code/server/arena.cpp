@@ -19,6 +19,7 @@ single game instance.
 #include "collisions.h"
 #include "wall.h"
 #include "wall_manager.h"
+#include "bomb.h"
 
 // include other dependencies
 #include <iostream>
@@ -47,11 +48,13 @@ Arena::Arena() {
 	accepting_players = true;
 	ready_to_start = false;
 	color_index = 0;
+	ready_to_reset = false;
 }
 
-// destructor, does not do anything yet
+// destructor
 Arena::~Arena() {
-	
+	// if the arena shuts down unexpectedly, follow the standard protocol for cleaning
+	clean_up();
 }
 
 // attempt to add a player to the arena, returns true if successful
@@ -81,6 +84,13 @@ bool Arena::add_player(Player* player) {
 	return true;
 }
 
+// remove a player who has disconnected
+void Arena::remove_player(Player* player) {
+	// try to erase from each set (alive and dead)
+	arena_players.erase(player);
+	dead_players.erase(player);
+}
+
 // add a new message from the server to the queue of messages to be processed
 void Arena::add_to_incoming_queue(message_struct* new_message) {
 	// lock the arena to add to the queue
@@ -99,6 +109,9 @@ void Arena::add_to_outgoing_queue(string message) {
 
 // runs the processes to get the game ready to start, then runs the game loop
 void Arena::start() {
+	// when the arena is restarted, signal that it should not be reset again by gameserver
+	ready_to_reset = false;
+	
 	// sets a timer for how long the arena can be waiting for players without starting
 	// after a certain amount of time has passed, the arena will start partially full
 	chrono::time_point<chrono::system_clock> start, current;
@@ -108,7 +121,7 @@ void Arena::start() {
 	chrono::duration<double> elapsed_seconds;
 	
 	// the amount of time (seconds) to wait after creation before the arena starts partially filled
-	double waiting_limit = 20.0;
+	double waiting_limit = 40.0;
 	
 	// runs until the game is ready to start
 	while (!ready_to_start) {
@@ -134,15 +147,21 @@ void Arena::start() {
 	
 	// the game is ready to start, call the game loop
 	game_loop();
+	
+	// free used memory and be prepared to restart the arena
+	clean_up();
 }
 
 // handles everything that needs to happen before the game can start
 void Arena::setup() {
-	// give every player a random starting position, check to make sure they are valid
+	// give every player a starting position
 	init_player_positions();
 	
 	// create the walls
-	wall_manager.create_walls();
+	wall_manager.start();
+	
+	// set up the bomb manager and its timer
+	bomb_manager.start();
 	
 	// send out the first message to show the starting positions
 	send_message();
@@ -181,6 +200,10 @@ void Arena::game_loop() {
 		update_player_positions();
 		// move each projectile according to its velocity
 		update_projectiles();
+		// update the walls
+		update_walls();
+		// update the bombs, everything can be done by the bomb manager
+		bomb_manager.update_bombs();
 		
 		// compile all relevant data into a string message and push it to the outgoing queue
 		send_message();
@@ -203,61 +226,36 @@ void Arena::game_loop() {
 		// update the start time to when the next frame should start
 		// will always slightly overshoot the target time, this compensates for that
 		start += chrono::milliseconds(frame_time_ms);
+		
+		// check for a winner
+		if (arena_players.size() <= 1) {
+			end_game = true;
+		}
 	}
+	
 }
 
-// gives every player a random starting position and ensures that the position is valid
+// gives every player a starting position from a preset list of positions
 void Arena::init_player_positions() {
 	// set the seed for the random number generator
 	srand(time(NULL));
 	int count = 0;
 	
+	vector<point> starting_positions;
+	// upper left
+	starting_positions.push_back(point(140, 160));
+	// lower right
+	starting_positions.push_back(point(820, 480));
+	// lower left
+	starting_positions.push_back(point(140, 480));
+	// upper right
+	starting_positions.push_back(point(820, 160));
+	
 	for (Player* player : arena_players) {
-		// used for looping until valid coordinates are found
-		bool valid = true;
-		
-		// coordinates
-		int xStart = 100 + (200 * count);
-		int yStart = 300;
+		player->posX = starting_positions[count].x;
+		player->posY = starting_positions[count].y;
 		count++;
-		
-		while (!valid) {
-			// set valid to true, if no collisions are found, the loop will end
-			valid = true;
-			
-			// find random starting coordinates
-			// add half the player dimensions since the coordinates are the player's center point
-			xStart = rand() % (SCREEN_WIDTH - Player::PLAYER_WIDTH);
-			xStart += Player::PLAYER_WIDTH / 2;
-			yStart = rand() % (SCREEN_HEIGHT - Player::PLAYER_HEIGHT);
-			yStart += Player::PLAYER_WIDTH / 2;
-			
-			// check for collisions with the other starting coordinates
-			for (Player* other_player : arena_players) {
-				// if the other player's coordinates have not been set, continue to next player
-				if (other_player->posX == -1) {
-					continue;
-				}
-				
-				// find the distance between the players along both axes
-				int distanceX = abs(xStart - other_player->posX);
-				int distanceY = abs(yStart - other_player->posY);
-				
-				// check for collision
-				if ((distanceX <= Player::PLAYER_WIDTH) && (distanceY <= Player::PLAYER_HEIGHT)) {
-					// if there is a collision, set valid to false so the loop will repeat, then break
-					valid = false;
-					break;
-				}
-			}
-			
-			// once this has been reached, valid will be true if no collisions were found
-			
-		}
-		
-		// coordinates have been found, assign them to the player
-		player->posX = xStart;
-		player->posY = yStart;
+		continue;
 	}
 }
 
@@ -297,8 +295,12 @@ void Arena::process_messages() {
 				msg->player->ready_to_shoot = true;
 			}
 		} catch (exception e) {
-			// probably needs better error handling, won't worry about it for now
+			// catch errors but do nothing about them
 		}
+		
+		// delete the message struct and free the memory
+		msg->player = NULL;
+		delete msg;
 	}
 }
 
@@ -328,7 +330,6 @@ void Arena::update_player_positions() {
 			check for wall collisions
 			- update rectangle points
 			- for each point, check if it overlaps with wall
-			- no need to create a polygon for each wall, unnecessary
 			*/
 			
 			// check if each point is outside the boundary
@@ -353,8 +354,8 @@ void Arena::update_player_positions() {
 				
 				other_player->update_rectangle_points();
 				
-				bool overlapping = Collisions::polygon_collision(player->body, other_player->body);
-				if (overlapping) {
+				bool c = Collisions::polygon_collision(player->body, other_player->body);
+				if (c) {
 					collision = true;
 				}
 			}
@@ -365,25 +366,25 @@ void Arena::update_player_positions() {
 			}
 			
 			for (Wall* wall : wall_manager.walls) {
+				wall->newRotation = wall->rotation;
 				wall->update_points();
 				bool c = Collisions::polygon_collision(player->body, wall->body);
 				if (c) {
 					collision = true;
-				}
-				
-				for (Polygon spike : wall->spikes) {
-					bool destroy = Collisions::polygon_collision(player->body, spike);
-					if (destroy) {
-						collision = true;
-						delete_player = true;
-						
-					}
 				}
 			}
 			
 			// break now for efficiency
 			if (collision) {
 				break;
+			}
+			
+			for (Bomb* bomb : bomb_manager.bombs) {
+				bool c = Collisions::bomb_player_collision(bomb, player->body);
+				if (c) {
+					delete_player = true;
+					collision = true;
+				}
 			}
 			
 			if (!collision) {
@@ -397,10 +398,11 @@ void Arena::update_player_positions() {
 		
 		if (delete_player) {
 			arena_players.erase(player);
-			dead_players.insert(player);;
+			dead_players.insert(player);
 			continue;
 		}
 		
+		// if the player has shot a projectile, create the projectile and add it to the set
 		if (player->shoot_projectile) {
 			Projectile* projectile = new Projectile(player->posX, player->posY,
 													player->rotation, Player::PLAYER_HEIGHT);
@@ -414,76 +416,119 @@ void Arena::update_player_positions() {
 // update the positions and check collisions for each projectile
 void Arena::update_projectiles() {
 	for (Projectile* projectile : projectiles) {
-		projectile->posX += projectile->velX;
-		projectile->posY += projectile->velY;
 		
-		/*
-		check boundary collision
-		*/
-		
-		if (projectile->posX <= Projectile::RADIUS) {
-			projectile->velX = abs(projectile->velX);
-		}
-		if (projectile->posX >= (SCREEN_WIDTH - Projectile::RADIUS)) {
-			projectile->velX = - abs(projectile->velX);
-		}
-		if (projectile->posY <= Projectile::RADIUS) {
-			projectile->velY = abs(projectile->velY);
-		}
-		if (projectile->posY >= (SCREEN_HEIGHT - Projectile::RADIUS)) {
-			projectile->velY = - abs(projectile->velY);
-		}
-		
-		/*
-		check player collision
-		*/
-		
-		// checks if the ball is destroyed in a collision
+		int i = 0;
+		bool exit = false;
 		bool was_deleted = false;
 		
-		for (Wall* wall : wall_manager.walls) {
-			wall->update_points();
-			bool c = Collisions::wall_ball_collision(projectile, wall);
-			if (c) {
-				projectiles.erase(projectile);
-				//walls.erase(wall);
-				delete projectile;
-				//delete wall;
-				return;
+		while ((i < projectile->PROJECTILE_SPEED) && (!exit)) {
+			
+			projectile->posX += projectile->velX;
+			projectile->posY += projectile->velY;
+			
+			/*
+			check boundary collision
+			*/
+			
+			if (projectile->posX <= Projectile::RADIUS) {
+				projectile->velX = abs(projectile->velX);
 			}
-		}
-		
-		
-		for (Player* player : arena_players) {
-			// get player ready to find actual rectangle corners
-			player->reset_temp_vars();
-			player->update_rectangle_points();
-			// check collision between the player and the ball
-			bool collision = Collisions::ball_player_collision(projectile, player->body);
-			if (collision) {
-				if ((projectile->tick_count > 2) || (projectile->shooter_color != player->color)) {
-					arena_players.erase(player);
-					dead_players.insert(player);
+			if (projectile->posX >= (SCREEN_WIDTH - Projectile::RADIUS)) {
+				projectile->velX = - abs(projectile->velX);
+			}
+			if (projectile->posY <= Projectile::RADIUS) {
+				projectile->velY = abs(projectile->velY);
+			}
+			if (projectile->posY >= (SCREEN_HEIGHT - Projectile::RADIUS)) {
+				projectile->velY = - abs(projectile->velY);
+			}
+			
+			/*
+			checks wall collision
+			*/
+			
+			for (Wall* wall : wall_manager.walls) {
+				wall->newRotation = wall->rotation;
+				wall->update_points();
+				// signals that the ball should be deflected on collision
+				bool deflect = true;
+				int c = Collisions::wall_ball_collision(projectile, wall, deflect);
+				if (c == 2) {
 					projectiles.erase(projectile);
 					delete projectile;
-					was_deleted = true;
-					break;
+					return;
 				}
 			}
+			
+			/*
+			check player collision
+			*/
+			
+			for (Player* player : arena_players) {
+				// get player ready to find actual rectangle corners
+				player->reset_temp_vars();
+				player->update_rectangle_points();
+				// check collision between the player and the ball
+				bool collision = Collisions::ball_player_collision(projectile, player->body);
+				if (collision) {
+					// checks to make sure the player isn't killed by the projectile it just fired
+					if ((projectile->tick_count > 2) || (projectile->shooter_color != player->color)) {
+						arena_players.erase(player);
+						dead_players.insert(player);
+						projectiles.erase(projectile);
+						delete projectile;
+						was_deleted = true;
+						exit = true;
+						break;
+					}
+				}
+			}
+			
+			i++;
 		}
 		
 		// if the ball was not deleted after a collision, increment its tick count
 		if (!was_deleted) {
 			projectile->tick_count++;
+			projectile->ticks_since_deflection++;
 		}
 		
 	}
 }
 
+// check if a wall can rotate and update each wall
+void Arena::update_walls() {
+	// check each rotating wall for the ability to rotate another step
+	for (Wall* wall : wall_manager.rotating_walls) {
+		wall->newRotation = wall->rotation + wall->rotationVel;
+		wall->update_points();
+		wall->can_rotate = true;
+		
+		// check for a collision with a player
+		for (Player* player : arena_players) {
+			bool player_collision = Collisions::polygon_collision(player->body, wall->body);
+			if (player_collision) {
+				wall->can_rotate = false;
+			}
+		}
+		
+		// check for a collision with a ball
+		for (Projectile* projectile : projectiles) {
+			// signals that the ball should not be deflected, only checking for the wall's rotation
+			bool deflect = false;
+			int ball_collision = Collisions::wall_ball_collision(projectile, wall, deflect);
+			if (ball_collision == 1) {
+				wall->can_rotate = false;
+			}
+		}
+	}
+	
+	wall_manager.update_walls();
+}
+
 // sends out a message with the color and coordinates of each player to draw
-// will expand the data sent as the game develops
 /*
-example output message:
+example output message (player section only):
 	"blue,100,100,0,green,300,300,90,red,500,500,180"
 */
 void Arena::send_message() {
@@ -527,6 +572,26 @@ void Arena::send_message() {
 	message += "/";
 	i = 0;
 	
+	// necessary since there may not be any bombs but there must be something between /'s
+	message += "=====,";
+	
+	// add each projectile's data to the message
+	for (Bomb* bomb : bomb_manager.bombs) {
+		if (i != 0) {
+			message += ",";
+		}
+		
+		message += to_string(bomb->posX);
+		message += "," + to_string(bomb->posY);
+		message += "," + to_string((int) bomb->radius);
+		message += "," + to_string((int) bomb->warning_mode);
+		
+		i++;
+	}
+	
+	message += "/";
+	i = 0;
+	
 	// add each projectile's data to the message
 	for (Projectile* projectile : projectiles) {
 		if (i != 0) {
@@ -539,6 +604,7 @@ void Arena::send_message() {
 		i++;
 	}
 	
+	// send the message to the queue to be sent to players
 	add_to_outgoing_queue(message);
 }
 
@@ -551,5 +617,53 @@ void Arena::lock_mutex() {
 void Arena::unlock_mutex() {
 	arena_lock.unlock();
 }
+
+// cleans the arena after a game has ended
+void Arena::clean_up() {
+	// ensure that nothing is messed up by being accessed during the clean up
+	lock_mutex();
+	
+	// clear the list of players, both alive and dead
+	// player objects are deleted in gameserver after this function has finished
+	arena_players.clear();
+	dead_players.clear();
+	
+	// clear the message queue and deallocate the memory for each message
+	while (!incoming_queue.empty()) {
+		message_struct* msg = incoming_queue.front();
+		incoming_queue.pop();
+		msg->player = NULL;
+		delete msg;
+	}
+	
+	// nothing to deallocate here, just need to clear the queue
+	while (!outgoing_queue.empty()) {
+		outgoing_queue.pop();
+	}
+	
+	// remove each projectile from the set and delete it
+	for (Projectile* projectile : projectiles) {
+		projectiles.erase(projectile);
+		delete projectile;
+	}
+	
+	// delete the walls, handled by the wall manager
+	wall_manager.clean_up();
+	
+	// delete the bombs, handled by the bomb manager
+	bomb_manager.clean_up();
+	
+	// signal to gameserver that the arena is done being cleaned
+	ready_to_reset = true;
+	ready_to_start = false;
+	num_players = 0;
+	color_index = 0;
+	accepting_players = true;
+	
+	// release the arena lock
+	unlock_mutex();
+	
+}
+
 
 

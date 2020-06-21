@@ -66,8 +66,7 @@ public:
 	// the polygon used for collision checking
 	Polygon body;
 
-private:
-
 };
 
 #endif
+

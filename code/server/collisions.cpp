@@ -11,6 +11,7 @@ Chaos the Game
 #include "projectile.h"
 #include "point_vect_struct.h"
 #include "wall.h"
+#include "bomb.h"
 
 #include <iostream>
 #include <vector>
@@ -28,7 +29,7 @@ Collisions::~Collisions() {
 
 }
 
-// check for collision between two polygons
+// check for collision between two polygons using separating axis theorem
 bool Collisions::polygon_collision(Polygon a, Polygon b) {
 	vector<Polygon> polygons = {a, b};
 	
@@ -86,17 +87,28 @@ bool Collisions::polygon_collision(Polygon a, Polygon b) {
 
 // check for a collision between a ball and a player
 bool Collisions::ball_player_collision(Projectile* ball, Polygon polygon) {
-	/*
-	add check for distance between the two objects to see if further calculations are necessary
-	*/
-	
+	point circle(ball->posX, ball->posY);
+	return circle_player_collision(circle, ball->RADIUS, polygon);
+}
+
+// check for a collision between a bomb and a player
+bool Collisions::bomb_player_collision(Bomb* bomb, Polygon polygon) {
+	if (bomb->warning_mode) {
+		return false;
+	}
+	point circle(bomb->posX, bomb->posY);
+	return circle_player_collision(circle, bomb->radius, polygon);
+}
+
+// used for ball-player collisions and bomb-player collisions
+bool Collisions::circle_player_collision(point circle, int radius, Polygon polygon) {
 	// find the location of the point after the entire frame has been rotated
 	point unrotated_circle;
-	unrotated_circle.x = (cos(polygon.rect_rot * (M_PI / 180)) * (ball->posX - polygon.center.x)) -
-						 (sin(polygon.rect_rot * (M_PI / 180)) * (ball->posY - polygon.center.y)) +
+	unrotated_circle.x = (cos(polygon.rect_rot * (M_PI / 180)) * (circle.x - polygon.center.x)) -
+						 (sin(polygon.rect_rot * (M_PI / 180)) * (circle.y - polygon.center.y)) +
 						 polygon.center.x;
-	unrotated_circle.y = (sin(polygon.rect_rot * (M_PI / 180)) * (ball->posX - polygon.center.x)) +
-						 (cos(polygon.rect_rot * (M_PI / 180)) * (ball->posY - polygon.center.y)) +
+	unrotated_circle.y = (sin(polygon.rect_rot * (M_PI / 180)) * (circle.x - polygon.center.x)) +
+						 (cos(polygon.rect_rot * (M_PI / 180)) * (circle.y - polygon.center.y)) +
 						 polygon.center.y;
 	
 	// calculate a reference point on the rectangle
@@ -124,7 +136,7 @@ bool Collisions::ball_player_collision(Projectile* ball, Polygon polygon) {
 	}
 	
 	int distance = (int) (get_distance(closestX, closestY, unrotated_circle.x, unrotated_circle.y) + 0.5);
-	if (distance < Projectile::RADIUS) {
+	if (distance < radius) {
 		return true;
 	}
 	
@@ -133,89 +145,43 @@ bool Collisions::ball_player_collision(Projectile* ball, Polygon polygon) {
 }
 
 // checks for collision between a wall and a ball and adjusts the path of the ball
-// will account for wall rotation later
-bool Collisions::wall_ball_collision(Projectile* ball, Wall* wall) {
-	
-	// check for collisions with spikes
-	
-	for (Polygon polygon : wall->spikes) {
-		for (int i1 = 0; i1 < polygon.points.size(); i1++) {
-			int i2 = (i1 + 1) % polygon.points.size();
-		
-			point p1 = polygon.points[i1];
-			point p2 = polygon.points[i2];
-		
-			point b((int) ball->posX, (int) ball->posY);
-		
-			if (line_circle_collision(p1, p2, ball)) {
-				vect wall_vect((p2.x - p1.x), (p2.y - p1.y));
-				return true;
-			}
-		}
-	}
+/* return values
+0 - no collision, do nothing
+1 - collision with body, signal not to rotate wall (only used for wall rotations)
+2 - collision with end, signal to delete projectile
+*/
+int Collisions::wall_ball_collision(Projectile* ball, Wall* wall, bool deflect) {
 	
 	// check for collision with rectangle
 	
-	for (int i1 = 0; i1 < wall->body.points.size(); i1++) {
-		int i2 = (i1 + 1) % wall->body.points.size();
-		
-		point p1 = wall->body.points[i1];
-		point p2 = wall->body.points[i2];
-		
-		point b((int) ball->posX, (int) ball->posY);
-		
-		if (line_circle_collision(p1, p2, ball)) {
+	point p1 = wall->body.points[0];
+	point p2 = wall->body.points[1];
+	
+	int ret = line_circle_collision(p1, p2, ball);
+	
+	if (ret == 2) {
+		// if collision with endpoint, delete the projectile
+		return 2;
+	} else if (ret == 1) {
+		if (deflect) {
+			// collision with line not on endpoint, calculate deflection
 			vect wall_vect((p2.x - p1.x), (p2.y - p1.y));
 			calculate_deflection(ball, wall_vect);
-			break;
 		}
+		return 1;
 	}
 	
-	return false;
+	return 0;
 	
-}
-
-// find the intersectin point between a line and a point, passed as 3 points
-/*
-TODO: add description of this process
-*/
-// might be IRRELEVANT
-point Collisions::calculate_intersection(point a, point b, point ball) {
-	// the slope of the line from a to b
-	double slope_line;
-	if ((b.y - a.y) == 0) {
-		point ret(ball.x, a.y);
-		return ret;
-	} else if ((b.x - a.x) == 0) {
-		point ret(a.x, ball.y);
-		return ret;
-	} else {
-		slope_line = ( (b.y - a.y) / (b.x - a.x) );
-	}
-	
-	// the slope of the line normal to this is (-1 / slope_line)
-	
-	// calculate the x coordinate of the intersection
-	double numerator = ( (ball.x / slope_line) + ball.y + (a.x * slope_line) - a.y );
-	double denominator = (slope_line + (1 / slope_line) );
-	double x = numerator / denominator;
-	double y = (slope_line * (x - a.x)) + a.y;
-	
-	point ret((int) x, (int) y);
-	return ret;
 }
 
 // determine if there is a collision between a line and a circle
-bool Collisions::line_circle_collision(point a, point b, Projectile* ball) {
-	// check if either endpoint of the line is inside the circle
-	double distance_a = get_distance(a.x, a.y, ball->posX, ball->posY);
-	double distance_b = get_distance(b.x, b.y, ball->posX, ball->posY);
-	
-	if ((distance_a <= ball->RADIUS) || (distance_b <= ball->RADIUS)) {
-		// collision with endpoint, return true
-		return true;
-	}
-	
+/* return values
+0 - no collision, do nothing
+1 - collision that is not on an endpoint, deflect the ball
+2 - collision on endpoint, delete the ball
+*/
+int Collisions::line_circle_collision(point a, point b, Projectile* ball) {
 	// calculate the length of the line
 	int dx = b.x - a.x;
 	int dy = b.y - a.y;
@@ -236,15 +202,22 @@ bool Collisions::line_circle_collision(point a, point b, Projectile* ball) {
 	// check if this point is within the line segment
 	bool on_segment = is_within_segment(a, b, closest);
 	if (!on_segment) {
-		return false;
+		// if closest point is not within line segment, check for collision with endpoint
+		double distance_a = get_distance(a.x, a.y, ball->posX, ball->posY);
+		double distance_b = get_distance(b.x, b.y, ball->posX, ball->posY);
+		if ((distance_a <= ball->RADIUS) || (distance_b <= ball->RADIUS)) {
+			return 2;
+		} else {
+			return 0;
+		}
 	}
 	
 	// find the distance from the circle to the closest point on the line
 	double dist = get_distance(closest.x, closest.y, ball->posX, ball->posY);
 	if (dist <= ball->RADIUS) {
-		return true;
+		return 1;
 	} else {
-		return false;
+		return 0;
 	}
 }
 
@@ -304,8 +277,6 @@ void Collisions::calculate_deflection(Projectile* ball, vect wall_vect) {
 	// set the ball's velocity to v'
 	ball->velX = v_prime.x;
 	ball->velY = v_prime.y;
-	
-	cout << "changing velocity vector!!" << endl;
 }
 
 // calculate the unit normal vector of a given vector
@@ -332,6 +303,7 @@ double Collisions::get_distance(double fromX, double fromY, double toX, double t
 	return sqrt((dx * dx) + (dy * dy));
 }
 
+// calculate the dot product of two vectors
 double Collisions::dot_product(vect a, vect b) {
 	return ( (a.x * b.x) + (a.y * b.y) );
 }

@@ -9,7 +9,7 @@ COMPILER_FLAGS = -Wall -g -fsanitize=address -fno-omit-frame-pointer
 LINKER_FLAGS = -lboost_system
 
 # the list of files to be compiled, when this gets larger I'll set so only changes get compiled
-OBJECTS = gameserver.cpp arena.cpp player.cpp polygon.cpp projectile.cpp collisions.cpp wall.cpp wall_manager.cpp
+OBJECTS = gameserver.cpp arena.cpp player.cpp polygon.cpp projectile.cpp collisions.cpp wall.cpp wall_manager.cpp bomb.cpp bomb_manager.cpp
 
 a.out: $(OBJECTS)
 	$(COMPILER) $(COMPILER_FLAGS) $(LINKER_FLAGS) $(OBJECTS)

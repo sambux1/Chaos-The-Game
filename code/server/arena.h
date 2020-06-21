@@ -20,6 +20,8 @@ single game instance.
 #include "projectile.h"
 #include "wall.h"
 #include "wall_manager.h"
+#include "bomb.h"
+#include "bomb_manager.h"
 
 // include other dependencies
 #include <queue>
@@ -41,12 +43,17 @@ public:
 	Arena();
 	~Arena();
 	
-	// dimensions of the game screen, may change in the future
+	// signals to the gameserver to reset the arena and prepare it for a new game
+	bool ready_to_reset;
+	
+	// dimensions of the game screen
 	static const int SCREEN_WIDTH = 960;
 	static const int SCREEN_HEIGHT = 640;
 	
 	// adds a player to the arena, returns true if successful
 	bool add_player(Player* player);
+	// remove a player after they have disconnected
+	void remove_player(Player* player);
 	
 	// game start loop, waits until game is ready to begin, then calls main loop
 	void start();
@@ -54,8 +61,10 @@ public:
 	void setup();
 	// main game loop
 	void game_loop();
+	// clean up the arena, free memory, and prepare for a new game
+	void clean_up();
 	
-	// assigns random positions to the players before the game starts
+	// assigns positions to the players before the game starts
 	void init_player_positions();
 	
 	// create walls
@@ -69,6 +78,9 @@ public:
 	
 	// update the positions and handle collisions for each projectile
 	void update_projectiles();
+	
+	// check for the ability to rotate a wall and call the wall_manager's update_walls()
+	void update_walls();
 	
 	// adds a message to the outgoing queue with the color and coordinateds of each player to draw
 	void send_message();
@@ -92,7 +104,7 @@ public:
 	// number of players currently in the arena
 	int num_players;
 	// maximum number of players allowed in an arena
-	static const int MAX_PLAYERS = 2;
+	static const int MAX_PLAYERS = 4;
 	
 	// functions to lock and unlock the arena lock, called by the server
 	void lock_mutex();
@@ -114,16 +126,18 @@ private:
 	int color_index;
 	
 	// pixels to move and degrees to rotate each frame
+	// for players only
 	static const int MOVEMENT_PER_FRAME = 5;
 	
 	// list of projectiles
 	set<Projectile*> projectiles;
 	
-	// list of walls
-	set<Wall*> walls;
-	
 	// handles wall updates
 	Wall_Manager wall_manager;
+	
+	// handles bombs
+	Bomb_Manager bomb_manager;
+
 };
 
 #endif

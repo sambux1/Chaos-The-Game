@@ -94,7 +94,7 @@ public:
 	void run(uint16_t port);
 	
 	// assigns a new player to the arena
-	void assign_to_arena(player_id* new_player);
+	void assign_to_arena(player_id* new_player, connection_hdl handler);
 	
 	// action loop, runs in separate thread from listener event loop
 	void process_actions();
@@ -108,14 +108,23 @@ public:
 	// send messages that have been added to the arena's outgoing message queue
 	void send_messages();
 	
+	// after an arena's game has terminated, reset the arena to prepare for a new game
+	void reset_arena(Arena* arena);
+	
 
 private:
 	// the main websocketpp server object
 	server m_server;
 	// the list of all currently open connections
 	connection_list m_connections;
+	// number of arenas to run simulataneously
+	static const int num_arenas = 3;
 	// the arena for the game, only one for now, will become a group of arenas later
-	Arena* arena;
+	vector<Arena*> arenas;
+	// a map of arenas to the players in the arena
+	map<Arena*, connection_list> arena_players_map;
+	// signals that the message processor is ready to go
+	bool arenas_ready;
 	// a map of connection identifiers to a struct containing players and their arena
 	// allows an incoming message to be efficiently routed to the appropriate arena
 	map<connection_hdl, player_id*, owner_less<connection_hdl>> m_player_map;

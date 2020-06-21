@@ -38,6 +38,8 @@ public:
 	// number of frames the bullet has been active
 	// necessary for expiring old bullets and avoiding killing the shooter when firing
 	int tick_count;
+	
+	int ticks_since_deflection;
 
 
 };

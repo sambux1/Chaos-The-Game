@@ -15,15 +15,11 @@ Chaos The Game
 class Wall {
 
 public:
-	Wall(int x, int y);
+	Wall(int x, int y, int rot);
 	~Wall();
 	
-	// dimensions of the wall, likely to change
-	static const int WALL_WIDTH = 40;
-	static const int WALL_HEIGHT = 200;
-	
-	// length of the spike, forms an equilateral triangle
-	static const int SPIKE_HEIGHT = 35; // WALL_WIDTH * sqrt(3) / 2
+	// the length of the wall
+	static const int WALL_HEIGHT = 140;
 	
 	// coordinates of the center point
 	int posX;
@@ -32,17 +28,16 @@ public:
 	// rotation of the wall (degrees)
 	int rotation;
 	int rotationVel;
-	
+	// the temp rotation used for collision checking
+	int newRotation;
 	// final rotation
-	int final_rotation;
+	int target_rotation;
+	
+	// checks if the wall is able to rotate without causing a collision
+	bool can_rotate;
 	
 	// calculate the coordinates of each point in the polygon
 	void update_points();
-	
-	// the two spikes on either end of the rectangle
-	Polygon spike1;
-	Polygon spike2;
-	vector<Polygon> spikes;
 	
 	// the collision body
 	Polygon body;
@@ -50,3 +45,4 @@ public:
 };
 
 #endif
+

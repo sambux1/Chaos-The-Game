@@ -30,7 +30,6 @@ to port 8080, where this program is listening.
 #include <string>
 #include <set>
 #include <map>
-#include <chrono>
 #include <mutex>
 
 using namespace std;
@@ -50,6 +49,9 @@ void run_arena_thread(Arena* arena);
 
 // constructor, initializes server and sets callback functions
 gameserver::gameserver() {
+	// signals that arenas should not be acted upon until they have been fully set up
+	arenas_ready = false;
+	
 	// initialize boost::asio connection functionality
 	m_server.init_asio();
 	
@@ -63,9 +65,27 @@ gameserver::gameserver() {
 	m_server.set_message_handler(bind(&gameserver::on_message, this, ::_1, ::_2));
 }
 
-// destructor, does not do anything yet
+// destructor
 gameserver::~gameserver() {
-
+	// empty all data structures
+	
+	while (!m_actions.empty()) {
+		m_actions.pop();
+	}
+	
+	while (arenas.size() > 0) {
+		Arena* arena = arenas[0];
+		arenas.erase(arenas.begin());
+		delete arena;
+	}
+	
+	for (connection_hdl handler : m_connections) {
+		remove_connection(handler);
+	}
+	
+	arena_players_map.clear();
+	
+	m_player_map.clear();
 }
 
 // callback function for when a new connection is created
@@ -96,9 +116,19 @@ void gameserver::on_message(connection_hdl handler, server::message_ptr message)
 void gameserver::run(uint16_t port) {
 	// arena should be created before listening begins, in case of an immediate connection
 	// create the arena to be run in the thread
-	arena = new Arena();
-	// start a thread to run the arena in parallel with the event loop
-	thread arena_thread(run_arena_thread, arena);
+	for (int i = 0; i < num_arenas; i++) {
+		Arena* arena = new Arena();
+		connection_list arena_connections;
+		arena_players_map.insert(pair<Arena*, connection_list>(arena, arena_connections));
+		arenas.push_back(arena);
+	}
+	
+	arenas_ready = true;
+	
+	// create a new thread for each arena
+	thread a0(run_arena_thread, arenas[0]);
+	thread a1(run_arena_thread, arenas[1]);
+	thread a2(run_arena_thread, arenas[2]);
 	
 	// begin listening for connections on the port given
 	m_server.listen(port);
@@ -107,8 +137,10 @@ void gameserver::run(uint16_t port) {
 	// begin the main event loop
 	m_server.run();
 	
-	// join the thread, thread process does not stop until the main event loop is terminated
-	arena_thread.join();
+	a2.join();
+	a1.join();
+	a0.join();
+	
 }
 
 /*
@@ -119,12 +151,10 @@ sends out all messages in the outgoing queue, then processes actions from the ac
 void gameserver::process_actions() {
 	while (true) {
 		
-		// process thread is started slightly before arena is created
-		if (arena != NULL) {
-			send_messages();
-		}
+		// each iteration, send all messages before processing any action
+		send_messages();
 		
-		// if there are no actions to be taken, release the lock and continue to the next iteration
+		// if there are no actions to be taken, continue to the next iteration
 		// cannot wait for the condition to be notified because then outgoing messages
 		// 		would be delayed until a new message is received
 		if (m_actions.empty()) {
@@ -174,7 +204,7 @@ void gameserver::add_connection(connection_hdl handler) {
 	m_player_map.insert(pair<connection_hdl, player_id*>(handler, new_player));
 	
 	// assign the player to an arena, fills the parent_arena field in the playeridentifier
-	assign_to_arena(new_player);
+	assign_to_arena(new_player, handler);
 }
 
 // removes the connection from the list of connections
@@ -186,6 +216,13 @@ void gameserver::remove_connection(connection_hdl handler) {
 		// remove a connection from the list
 		m_connections.erase(handler);
 	}
+	
+	// deletes the player
+	player_id* player_id = m_player_map[handler];
+	player_id->parent_arena->remove_player(player_id->player);
+	player_id->parent_arena = NULL;
+	delete player_id->player;
+	delete player_id;
 }
 
 // receives a new message and sends the message to the arena
@@ -200,47 +237,78 @@ void gameserver::process_incoming_message(connection_hdl handler, server::messag
 	msg->message_text = message->get_payload();
 	
 	// add the message to the arena's message queue
-	// when there are multiple arenas, it will need to find the correct one
 	// the arena handles locking
-	arena->add_to_incoming_queue(msg);
+	m_player_map[handler]->parent_arena->add_to_incoming_queue(msg);
 }
 
-/*
-sends a message from the arena to all members of the arena
-since there is only one arena for now, messages can be sent to all connections
-once there are more arenas, will need to find the appropriate arena and its members
-*/
-// ********TODO: make this actually send dummy messages, then real messages
+
+// sends a message from the arena to all members of the arena
 void gameserver::send_messages() {
-	// lock the arena outgoing queue
-	arena->lock_mutex();
-	
-	// send all messages in the queue
-	while (!arena->outgoing_queue.empty()) {
-		// pop the top message off the queue
-		string message = arena->outgoing_queue.front();
-		arena->outgoing_queue.pop();
-		
-		// send message to all connections (to be modified for multiple arenas)
-		for (connection_hdl handler : m_connections) {
-			// sends the message to the player, sets opcode to 1 for text data
-			m_server.send(handler, message, websocketpp::frame::opcode::value(1));
-		}
+	// ensures the arenas are not accessed until they have been properly set up
+	if (!arenas_ready) {
+		return;
 	}
 	
-	// release the arena lock
-	arena->unlock_mutex();
+	for (Arena* arena : arenas) {
+		// check if the arena's game has finished and needs to be reset
+		// exists here because the arena's connection list cannot be accessed from static method
+		if (arena->ready_to_reset) {
+			reset_arena(arena);
+			continue;
+		}
+		
+		// lock the arena outgoing queue
+		arena->lock_mutex();
+		
+		// send all messages in the queue
+		while (!arena->outgoing_queue.empty()) {
+			// pop the top message off the queue
+			string message = arena->outgoing_queue.front();
+			arena->outgoing_queue.pop();
+			
+			// send message to all connections in the arena
+			for (connection_hdl handler : arena_players_map[arena]) {
+				try {
+					// sends the message to the player, sets opcode to 1 for text data
+					m_server.send(handler, message, websocketpp::frame::opcode::value(1));
+				} catch (exception e) {
+					// error sending message
+				}
+			}
+		}
+		
+		// release the arena lock
+		arena->unlock_mutex();
+	}
 }
 
 
 // adds a new player to the arena, locking is handled by the arena
-void gameserver::assign_to_arena(player_id* new_player) {
-	// assigns the arena to the player identifier
-	new_player->parent_arena = arena;
-	
-	// adds the player to the arena
-	// does not check for error, will need to with multiple arenas
-	arena->add_player(new_player->player);
+void gameserver::assign_to_arena(player_id* new_player, connection_hdl handler) {
+	// check for first open arena
+	for (Arena* arena : arenas) {
+		if (arena->add_player(new_player->player)) {
+			// assigns the arena to the player identifier
+			new_player->parent_arena = arena;
+
+			// locks the connections list so one can be added
+			{
+				websocketpp::lib::lock_guard<websocketpp::lib::mutex> guard(m_connection_lock);
+				// add the connection handler to the set of connections
+				arena_players_map[arena].insert(handler);
+			}
+			
+			// added to an arena, do not add to multiple arenas
+			break;
+		}
+	}
+}
+
+// prepares the arena for a new game
+// clears the connection list for the arena
+void gameserver::reset_arena(Arena* arena) {
+	// removes each connection from the arena
+	arena_players_map[arena].clear();
 }
 
 

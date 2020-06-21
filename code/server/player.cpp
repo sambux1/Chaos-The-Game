@@ -10,7 +10,6 @@ Chaos The Game
 #include "polygon.h"
 #include "point_vect_struct.h"
 
-// include dependencies
 #include <iostream>
 #include <string>
 #include <cmath>
@@ -42,7 +41,7 @@ Player::Player() {
 	ready_to_shoot = true;
 }
 
-// destructor, does not do anything yet
+// destructor, nothing to deallocate
 Player::~Player() {
 
 }
@@ -86,6 +85,7 @@ void Player::update_rectangle_points() {
 	body.rect_rot = newRotation;
 }
 
+// resets the temporary variables used for collision checking to the actual values of the player
 void Player::reset_temp_vars() {
 	newX = posX;
 	newY = posY;
